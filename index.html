@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Chess vs Easy Bot</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: linear-gradient(160deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #e8e8e8;
+      padding: 16px;
+    }
+    h1 {
+      font-size: 1.6rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+      letter-spacing: -0.02em;
+    }
+    .subtitle {
+      font-size: 0.9rem;
+      color: #a0aec0;
+      margin-bottom: 20px;
+    }
+    .board-wrap {
+      position: relative;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    #board {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      grid-template-rows: repeat(8, 1fr);
+      width: min(92vw, 480px);
+      height: min(92vw, 480px);
+      border: 3px solid #2d3748;
+    }
+    .square {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: clamp(28px, 7vw, 48px);
+      cursor: pointer;
+      user-select: none;
+      position: relative;
+      transition: background 0.12s ease;
+    }
+    .light { background: #f0d9b5; }
+    .dark  { background: #b58863; }
+    .square.selected {
+      background: #7b9eff !important;
+    }
+    .square.legal {
+      box-shadow: inset 0 0 0 4px rgba(100, 180, 100, 0.55);
+    }
+    .square.legal.has-piece::after {
+      content: '';
+      position: absolute;
+      width: 85%;
+      height: 85%;
+      border-radius: 50%;
+      border: 4px solid rgba(100, 180, 100, 0.7);
+      pointer-events: none;
+    }
+    .square.last-move {
+      background: #cdd26a !important;
+    }
+    .square.check {
+      background: #e85d5d !important;
+    }
+    .controls {
+      margin-top: 20px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    button {
+      background: #4a5568;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+    button:hover { background: #5a6a7e; }
+    button:active { transform: scale(0.97); }
+    button.primary {
+      background: #3182ce;
+    }
+    button.primary:hover { background: #2b6cb0; }
+    #status {
+      margin-top: 16px;
+      font-size: 1.05rem;
+      min-height: 1.5em;
+      text-align: center;
+      color: #e2e8f0;
+    }
+    #status.win { color: #68d391; font-weight: 600; }
+    #status.lose { color: #fc8181; font-weight: 600; }
+    .info {
+      margin-top: 12px;
+      font-size: 0.8rem;
+      color: #718096;
+      text-align: center;
+      max-width: 360px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Chess vs Bot</h1>
+  <p class="subtitle">Easy difficulty · You play White</p>
+
+  <div class="board-wrap">
+    <div id="board"></div>
+  </div>
+
+  <div id="status">Your turn</div>
+
+  <div class="controls">
+    <button class="primary" onclick="newGame()">New Game</button>
+    <button onclick="undoMove()" id="undo-btn">Undo</button>
+  </div>
+
+  <p class="info">Click a piece, then click a highlighted square to move. The bot plays randomly with a slight preference for captures — perfect for beginners.</p>
+
+  <script>
+    const game = new Chess();
+    let selected = null;       // {row, col} or null
+    let legalTargets = [];     // array of squares like 'e4'
+    let lastMove = null;       // {from, to}
+    let thinking = false;
+
+    const pieceUnicode = {
+      'wK': '♔', 'wQ': '♕', 'wR': '♖', 'wB': '♗', 'wN': '♘', 'wP': '♙',
+      'bK': '♚', 'bQ': '♛', 'bR': '♜', 'bB': '♝', 'bN': '♞', 'bP': '♟'
+    };
+
+    function squareName(row, col) {
+      return 'abcdefgh'[col] + (8 - row);
+    }
+
+    function parseSquare(name) {
+      const col = name.charCodeAt(0) - 97;
+      const row = 8 - parseInt(name[1], 10);
+      return { row, col };
+    }
+
+    function render() {
+      const boardEl = document.getElementById('board');
+      boardEl.innerHTML = '';
+      const board = game.board();
+
+      for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+          const sq = document.createElement('div');
+          const isLight = (row + col) % 2 === 0;
+          sq.className = 'square ' + (isLight ? 'light' : 'dark');
+
+          const name = squareName(row, col);
+          const piece = board[row][col];
+
+          if (piece) {
+            const key = piece.color + piece.type.toUpperCase();
+            sq.textContent = pieceUnicode[key] || '';
+            sq.classList.add('has-piece');
+          }
+
+          if (selected && selected.row === row && selected.col === col) {
+            sq.classList.add('selected');
+          }
+          if (legalTargets.includes(name)) {
+            sq.classList.add('legal');
+          }
+          if (lastMove && (lastMove.from === name || lastMove.to === name)) {
+            sq.classList.add('last-move');
+          }
+
+          // Highlight king in check
+          if (game.in_check()) {
+            const turn = game.turn();
+            if (piece && piece.type === 'k' && piece.color === turn) {
+              sq.classList.add('check');
+            }
+          }
+
+          sq.dataset.row = row;
+          sq.dataset.col = col;
+          sq.addEventListener('click', () => onSquareClick(row, col));
+          boardEl.appendChild(sq);
+        }
+      }
+
+      updateStatus();
+    }
+
+    function updateStatus() {
+      const el = document.getElementById('status');
+      el.className = '';
+
+      if (game.in_checkmate()) {
+        if (game.turn() === 'w') {
+          el.textContent = 'Checkmate — Bot wins!';
+          el.classList.add('lose');
+        } else {
+          el.textContent = 'Checkmate — You win!';
+          el.classList.add('win');
+        }
+      } else if (game.in_draw()) {
+        el.textContent = 'Draw';
+      } else if (game.in_check()) {
+        el.textContent = game.turn() === 'w' ? 'You are in check!' : 'Bot is in check';
+      } else if (thinking) {
+        el.textContent = 'Bot is thinking…';
+      } else {
+        el.textContent = game.turn() === 'w' ? 'Your turn' : 'Bot’s turn';
+      }
+    }
+
+    function onSquareClick(row, col) {
+      if (thinking || game.game_over()) return;
+      if (game.turn() !== 'w') return; // only allow player moves on white's turn
+
+      const name = squareName(row, col);
+      const board = game.board();
+      const piece = board[row][col];
+
+      // If a piece is already selected and this is a legal target → move
+      if (selected && legalTargets.includes(name)) {
+        const from = squareName(selected.row, selected.col);
+        const move = game.move({ from, to: name, promotion: 'q' });
+        if (move) {
+          lastMove = { from, to: name };
+          selected = null;
+          legalTargets = [];
+          render();
+          if (!game.game_over()) {
+            setTimeout(botMove, 350 + Math.random() * 400);
+          }
+        }
+        return;
+      }
+
+      // Select own piece
+      if (piece && piece.color === 'w') {
+        selected = { row, col };
+        const moves = game.moves({ square: name, verbose: true });
+        legalTargets = moves.map(m => m.to);
+        render();
+        return;
+      }
+
+      // Clicked empty or enemy → deselect
+      selected = null;
+      legalTargets = [];
+      render();
+    }
+
+    // ——— Easy Bot ———
+    // Prefers captures and checks a little, otherwise random legal move
+    function botMove() {
+      if (game.game_over() || game.turn() !== 'b') return;
+      thinking = true;
+      updateStatus();
+
+      setTimeout(() => {
+        const moves = game.moves({ verbose: true });
+        if (moves.length === 0) {
+          thinking = false;
+          render();
+          return;
+        }
+
+        // Score moves simply for "easy but not completely random"
+        function score(m) {
+          let s = Math.random() * 10; // base randomness
+          if (m.captured) s += 25 + (pieceValue(m.captured) * 3);
+          if (m.san.includes('+')) s += 15;       // check
+          if (m.san.includes('#')) s += 100;      // mate
+          if (m.promotion) s += 20;
+          // slight preference to develop / center
+          if (['e4','e5','d4','d5','c4','c5','f4','f5'].includes(m.to)) s += 4;
+          return s;
+        }
+
+        moves.sort((a, b) => score(b) - score(a));
+        // Pick from the top few so it stays easy / unpredictable
+        const top = moves.slice(0, Math.min(4, moves.length));
+        const choice = top[Math.floor(Math.random() * top.length)];
+
+        game.move(choice);
+        lastMove = { from: choice.from, to: choice.to };
+        thinking = false;
+        selected = null;
+        legalTargets = [];
+        render();
+      }, 280);
+    }
+
+    function pieceValue(type) {
+      return { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 }[type] || 0;
+    }
+
+    function newGame() {
+      game.reset();
+      selected = null;
+      legalTargets = [];
+      lastMove = null;
+      thinking = false;
+      render();
+    }
+
+    function undoMove() {
+      if (thinking) return;
+      // Undo bot move + player move if possible
+      game.undo();
+      if (game.turn() === 'b') game.undo(); // undo the bot's reply too
+      selected = null;
+      legalTargets = [];
+      lastMove = null;
+      render();
+    }
+
+    // Start
+    render();
+  </script>
+</body>
+</html>
